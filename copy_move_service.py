@@ -184,34 +184,122 @@ def cluster_matches(matches, block_size=BLOCK_SIZE, min_cluster=3):
 
 
 def draw_heatmap(img, regions, scale_factor=1.0):
-    """Dibujar las regiones detectadas sobre la imagen original."""
-    overlay = img.copy().convert('RGBA')
-    draw    = ImageDraw.Draw(overlay)
+    """
+    Genera una imagen forense clara sobre la foto original.
+    - Rectángulos con etiquetas en español comprensibles
+    - Flechas entre origen y destino
+    - Leyenda visual explicativa
+    - Diseño limpio para personas sin conocimientos técnicos
+    """
+    # Trabajar sobre la imagen original a tamaño real
+    w_img, h_img = img.size
+    result = img.copy().convert('RGBA')
+    overlay = Image.new('RGBA', (w_img, h_img), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
 
-    colors = {
-        'source':      (255, 80,  80,  120),  # rojo = región origen (copiada de aquí)
-        'destination': (80,  80,  255, 120),  # azul = región destino (pegada aquí)
-    }
+    # Colores con mejor contraste y transparencia
+    COLOR_ORIGEN  = (220, 38, 38,  140)   # rojo — zona de origen (de donde se copió)
+    COLOR_DESTINO = (37, 99, 235,  140)   # azul — zona destino (donde se pegó)
+    COLOR_BORDE_O = (220, 38, 38,  255)
+    COLOR_BORDE_D = (37, 99, 235,  255)
+    COLOR_FLECHA  = (251, 191, 36, 230)   # amarillo — flecha de conexión
 
-    for region in regions:
-        for rtype in ['source', 'destination']:
-            x, y, w, h = [int(v * scale_factor) for v in region[rtype]]
-            color = colors[rtype]
-            draw.rectangle([x, y, x+w, y+h], fill=color, outline=color[:3]+(230,))
+    for i, region in enumerate(regions):
+        # Escalar coordenadas
+        sx, sy, sw, sh = [int(v * scale_factor) for v in region['source']]
+        dx, dy, dw, dh = [int(v * scale_factor) for v in region['destination']]
 
-        # Línea conectando origen y destino
-        sx = int((region['source'][0] + region['source'][2]//2) * scale_factor)
-        sy = int((region['source'][1] + region['source'][3]//2) * scale_factor)
-        dx = int((region['destination'][0] + region['destination'][2]//2) * scale_factor)
-        dy = int((region['destination'][1] + region['destination'][3]//2) * scale_factor)
-        draw.line([sx, sy, dx, dy], fill=(255, 165, 0, 200), width=2)
+        # Relleno semitransparente
+        draw.rectangle([sx, sy, sx+sw, sy+sh], fill=COLOR_ORIGEN)
+        draw.rectangle([dx, dy, dx+dw, dy+dh], fill=COLOR_DESTINO)
 
-    # Leyenda
-    h_img = overlay.height
-    draw.rectangle([0, h_img-30, overlay.width, h_img], fill=(0,0,0,160))
-    draw.text((8, h_img-22), f'Copy-Move | {len(regions)} region(es) detectada(s)', fill=(255,255,255,230))
+        # Borde sólido más grueso para visibilidad
+        for offset in range(3):
+            draw.rectangle(
+                [sx-offset, sy-offset, sx+sw+offset, sy+sh+offset],
+                outline=COLOR_BORDE_O
+            )
+            draw.rectangle(
+                [dx-offset, dy-offset, dx+dw+offset, dy+dh+offset],
+                outline=COLOR_BORDE_D
+            )
 
-    return overlay.convert('RGB')
+        # Centro de cada región para la flecha
+        cx_src = sx + sw // 2
+        cy_src = sy + sh // 2
+        cx_dst = dx + dw // 2
+        cy_dst = dy + dh // 2
+
+        # Línea punteada gruesa de conexión
+        draw.line([cx_src, cy_src, cx_dst, cy_dst],
+                  fill=COLOR_FLECHA, width=4)
+
+        # Punta de flecha en el destino
+        import math
+        angle = math.atan2(cy_dst - cy_src, cx_dst - cx_src)
+        arrow_len = 18
+        arrow_angle = math.pi / 6
+        ax1 = int(cx_dst - arrow_len * math.cos(angle - arrow_angle))
+        ay1 = int(cy_dst - arrow_len * math.sin(angle - arrow_angle))
+        ax2 = int(cx_dst - arrow_len * math.cos(angle + arrow_angle))
+        ay2 = int(cy_dst - arrow_len * math.sin(angle + arrow_angle))
+        draw.polygon([(cx_dst, cy_dst), (ax1, ay1), (ax2, ay2)],
+                     fill=COLOR_FLECHA)
+
+        # Número de región en ambas zonas
+        num = str(i + 1)
+        # Etiqueta origen
+        lx, ly = sx + 4, sy + 4
+        draw.rectangle([lx-2, ly-2, lx+14, ly+14], fill=(0,0,0,180))
+        draw.text((lx, ly), num, fill=(255,255,255,255))
+        # Etiqueta destino
+        draw.rectangle([dx+4-2, dy+4-2, dx+4+14, dy+4+14], fill=(0,0,0,180))
+        draw.text((dx+4, dy+4), num, fill=(255,255,255,255))
+
+    # Combinar overlay con la imagen original
+    result = Image.alpha_composite(result, overlay)
+    result = result.convert('RGB')
+    draw_final = ImageDraw.Draw(result)
+
+    # ── Leyenda inferior clara ────────────────────────────
+    leyenda_h = 90
+    leyenda_y = h_img - leyenda_h
+
+    # Fondo semitransparente para la leyenda
+    leyenda_overlay = Image.new('RGBA', (w_img, leyenda_h), (15, 23, 42, 210))
+    result.paste(Image.fromarray(
+        __import__('numpy').array(leyenda_overlay.convert('RGB'))
+    ), (0, leyenda_y))
+    draw_final = ImageDraw.Draw(result)
+
+    # Título de la leyenda
+    draw_final.text((12, leyenda_y + 8),
+                    f'ANÁLISIS FORENSE — {len(regions)} ZONA(S) CON EDICIÓN DETECTADA',
+                    fill=(251, 191, 36))
+
+    # Items de leyenda
+    items = [
+        ((220, 38, 38),  'ZONA ORIGEN: de aquí se copió el contenido'),
+        ((37, 99, 235),  'ZONA DESTINO: aquí se pegó para ocultar algo'),
+        ((251, 191, 36), 'FLECHA: indica la dirección de la manipulación'),
+    ]
+    for j, (color, texto) in enumerate(items):
+        ix = 12 + j * (w_img // 3)
+        iy = leyenda_y + 32
+        # Cuadrado de color
+        draw_final.rectangle([ix, iy, ix+14, iy+14], fill=color)
+        # Texto
+        draw_final.text((ix + 20, iy), texto, fill=(200, 200, 200))
+
+    # Números de referencia en la leyenda
+    if len(regions) > 1:
+        ref_text = '  |  '.join([
+            f'Región {i+1}: similitud {r["similarity"]:.0f}%'
+            for i, r in enumerate(regions)
+        ])
+        draw_final.text((12, leyenda_y + 60), ref_text, fill=(150, 150, 150))
+
+    return result
 
 
 @app.route('/health', methods=['GET'])
