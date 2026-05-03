@@ -3,3 +3,4 @@ gunicorn==23.0.0
 Pillow==11.1.0
 numpy==2.2.3
 scipy==1.15.2
+requests==2.32.3
