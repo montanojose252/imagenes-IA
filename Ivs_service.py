@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 ivs_service.py — Microservicio Forense IVS v3.0
@@ -259,12 +258,13 @@ def draw_copymove_heatmap(img, regions, scale_factor=1.0):
 def call_vision_api(image_b64, features):
     """
     Llama a Google Cloud Vision API con los features solicitados.
-    features: lista de dicts {'type': 'TEXT_DETECTION'} etc.
+    Lee GOOGLE_VISION_KEY en tiempo real para evitar problemas de caché.
     """
-    if not VISION_KEY:
+    vision_key = os.environ.get('GOOGLE_VISION_KEY', '') or VISION_KEY
+    if not vision_key:
         return None, 'GOOGLE_VISION_KEY no configurada'
 
-    url = f'https://vision.googleapis.com/v1/images:annotate?key={VISION_KEY}'
+    url = f'https://vision.googleapis.com/v1/images:annotate?key={vision_key}'
     body = {
         'requests': [{
             'image': {'content': image_b64},
@@ -646,12 +646,16 @@ def validate_key(req):
 
 @app.route('/health', methods=['GET'])
 def health():
+    # Leer en tiempo real para reflejar el estado actual de las variables
+    vision_key_live = os.environ.get('GOOGLE_VISION_KEY', '')
+    global VISION_KEY
+    VISION_KEY = vision_key_live  # actualizar la global también
     return jsonify({
         'status':         'ok',
         'service':        'IVS Forensic Service',
         'version':        '2.0',
         'copy_move':      True,
-        'google_vision':  bool(VISION_KEY),
+        'google_vision':  bool(vision_key_live),
         'endpoints':      ['/health', '/analyze', '/vision', '/compare'],
     })
 
