@@ -37,6 +37,20 @@ from PIL import Image, ImageDraw
 import numpy as np
 import base64, io, os, math, requests, json
 
+# Cargar .env si existe — fallback cuando Railway no inyecta variables
+def load_env_file():
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    key, val = key.strip(), val.strip()
+                    if not os.environ.get(key):
+                        os.environ[key] = val
+load_env_file()
+
 app = Flask(__name__)
 
 # ── Configuración ─────────────────────────────────────────
