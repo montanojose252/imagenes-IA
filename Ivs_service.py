@@ -644,6 +644,19 @@ def validate_key(req):
     return key == SECRET_KEY
 
 
+@app.route('/debug', methods=['GET'])
+def debug():
+    """Endpoint temporal para diagnosticar variables de entorno."""
+    vision_raw = os.environ.get('GOOGLE_VISION_KEY', 'NO_ENCONTRADA')
+    all_keys = [k for k in os.environ.keys() if 'VISION' in k or 'GOOGLE' in k or 'IVS' in k]
+    return jsonify({
+        'GOOGLE_VISION_KEY_presente': bool(vision_raw and vision_raw != 'NO_ENCONTRADA'),
+        'GOOGLE_VISION_KEY_longitud': len(vision_raw) if vision_raw != 'NO_ENCONTRADA' else 0,
+        'GOOGLE_VISION_KEY_inicio':   vision_raw[:8] if len(vision_raw) > 8 else vision_raw,
+        'variables_relacionadas':     all_keys,
+        'VISION_KEY_global':          bool(VISION_KEY),
+    })
+
 @app.route('/health', methods=['GET'])
 def health():
     # Leer en tiempo real para reflejar el estado actual de las variables
