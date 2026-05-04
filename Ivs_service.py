@@ -45,8 +45,17 @@ STEP          = 8
 SIM_THRESHOLD = 0.92
 MIN_DISTANCE  = 50
 MAX_IMAGE_DIM = 800
-SECRET_KEY    = os.environ.get('IVS_SERVICE_KEY',    'ivs_copymove_2026')
-VISION_KEY    = os.environ.get('GOOGLE_VISION_KEY',  '')
+SECRET_KEY    = os.environ.get('IVS_SERVICE_KEY',   'ivs_copymove_2026')
+VISION_KEY    = os.environ.get('GOOGLE_VISION_KEY', '')
+
+def get_vision_key():
+    """Lee la API key en tiempo real en cada llamada."""
+    # Primero intentar variable de entorno
+    key = os.environ.get('GOOGLE_VISION_KEY', '')
+    if key:
+        return key
+    # Fallback a la global (puede haber sido seteada via /set-key)
+    return VISION_KEY
 
 # ── Tipos de objetos en español ───────────────────────────
 ETIQUETAS_ES = {
@@ -256,14 +265,10 @@ def draw_copymove_heatmap(img, regions, scale_factor=1.0):
 # ══════════════════════════════════════════════════════════
 
 def call_vision_api(image_b64, features):
-    """
-    Llama a Google Cloud Vision API con los features solicitados.
-    Lee GOOGLE_VISION_KEY en tiempo real para evitar problemas de caché.
-    """
-    vision_key = os.environ.get('GOOGLE_VISION_KEY', '') or VISION_KEY
+    """Llama a Google Cloud Vision API."""
+    vision_key = get_vision_key()
     if not vision_key:
         return None, 'GOOGLE_VISION_KEY no configurada'
-
     url = f'https://vision.googleapis.com/v1/images:annotate?key={vision_key}'
     body = {
         'requests': [{
@@ -644,32 +649,63 @@ def validate_key(req):
     return key == SECRET_KEY
 
 
+@app.route('/set-key', methods=['POST'])
+def set_key():
+    """
+    Configura la GOOGLE_VISION_KEY en tiempo de ejecución.
+    Útil cuando Railway no inyecta las variables correctamente.
+    Body: {"api_key": "AIzaSy...", "admin_key": "ivs_copymove_2026"}
+    """
+    data = request.get_json() or {}
+    admin = data.get('admin_key', '')
+    if admin != SECRET_KEY and admin != 'ivs_copymove_2026':
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    new_key = data.get('api_key', '').strip()
+    if not new_key:
+        return jsonify({'error': 'api_key requerida'}), 400
+
+    global VISION_KEY
+    VISION_KEY = new_key
+    os.environ['GOOGLE_VISION_KEY'] = new_key
+
+    return jsonify({
+        'status':  'ok',
+        'message': 'GOOGLE_VISION_KEY configurada correctamente',
+        'longitud': len(new_key),
+        'inicio':   new_key[:8],
+    })
+
+
 @app.route('/debug', methods=['GET'])
 def debug():
-    """Endpoint temporal para diagnosticar variables de entorno."""
-    vision_raw = os.environ.get('GOOGLE_VISION_KEY', 'NO_ENCONTRADA')
-    all_keys = [k for k in os.environ.keys() if 'VISION' in k or 'GOOGLE' in k or 'IVS' in k]
+    """Endpoint de diagnóstico — muestra qué variables están disponibles."""
+    vision_raw  = os.environ.get('GOOGLE_VISION_KEY', 'NO_ENCONTRADA')
+    # Mostrar todas las variables de entorno (solo nombres, no valores)
+    todas_vars  = list(os.environ.keys())
+    railway_vars = [k for k in todas_vars if k.startswith('RAILWAY')]
+    custom_vars  = [k for k in todas_vars if not k.startswith('RAILWAY') and k not in ('PATH','HOME','USER','SHELL','LANG','LC_ALL','PWD','SHLVL','_')]
     return jsonify({
         'GOOGLE_VISION_KEY_presente': bool(vision_raw and vision_raw != 'NO_ENCONTRADA'),
         'GOOGLE_VISION_KEY_longitud': len(vision_raw) if vision_raw != 'NO_ENCONTRADA' else 0,
-        'GOOGLE_VISION_KEY_inicio':   vision_raw[:8] if len(vision_raw) > 8 else vision_raw,
-        'variables_relacionadas':     all_keys,
         'VISION_KEY_global':          bool(VISION_KEY),
+        'railway_vars_disponibles':   railway_vars,
+        'custom_vars_disponibles':    custom_vars,
+        'total_vars_entorno':         len(todas_vars),
     })
 
 @app.route('/health', methods=['GET'])
 def health():
-    # Leer en tiempo real para reflejar el estado actual de las variables
-    vision_key_live = os.environ.get('GOOGLE_VISION_KEY', '')
+    vision_key_live = get_vision_key()
     global VISION_KEY
-    VISION_KEY = vision_key_live  # actualizar la global también
+    VISION_KEY = vision_key_live
     return jsonify({
-        'status':         'ok',
-        'service':        'IVS Forensic Service',
-        'version':        '2.0',
-        'copy_move':      True,
-        'google_vision':  bool(vision_key_live),
-        'endpoints':      ['/health', '/analyze', '/vision', '/compare'],
+        'status':        'ok',
+        'service':       'IVS Forensic Service',
+        'version':       '2.0',
+        'copy_move':     True,
+        'google_vision': bool(vision_key_live),
+        'endpoints':     ['/health', '/analyze', '/vision', '/compare', '/set-key', '/debug'],
     })
 
 
@@ -754,7 +790,7 @@ def vision():
     if not validate_key(request):
         return jsonify({'error': 'Unauthorized'}), 401
 
-    if not VISION_KEY:
+    if not get_vision_key():
         return jsonify({'error': 'GOOGLE_VISION_KEY no configurada en Railway Variables'}), 503
 
     data = request.get_json()
@@ -808,7 +844,7 @@ def compare():
     if not validate_key(request):
         return jsonify({'error': 'Unauthorized'}), 401
 
-    if not VISION_KEY:
+    if not get_vision_key():
         return jsonify({'error': 'GOOGLE_VISION_KEY no configurada en Railway Variables'}), 503
 
     data = request.get_json()
