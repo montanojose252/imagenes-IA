@@ -462,6 +462,10 @@ def cruzar_con_zonas_ela(vision_result, ela_zones):
             continue
         nivel = zona.get('nivel', 'LOW')
 
+        # Solo zonas HIGH o MED — las LOW generan falsos positivos con texto de fondo
+        if nivel not in ('HIGH', 'MED'):
+            continue
+
         # Verificar textos en la zona editada
         for txt in vision_result.get('textos', []):
             if zones_overlap(zona_bbox, txt['bbox'], threshold=0.25):
@@ -766,21 +770,47 @@ def analyze():
         confidence = min(99, int(avg_sim * 0.7 + min(avg_blocks, 20) * 1.5))
         detected   = confidence >= 60
 
-        heatmap_b64 = None
-        if detected:
+        # ── Filtro anti-ruido ─────────────────────────────────────────
+        # Si hay demasiadas regiones (>20) es probable que sea ruido del algoritmo
+        # detectando patrones repetitivos naturales: uniformes iguales, estanterías,
+        # pisos con textura uniforme. Una manipulación real suele tener 1-5 regiones.
+        img_area = img_orig.size[0] * img_orig.size[1]
+        total_region_area = sum(r['source'][2] * r['source'][3] for r in regions)
+        coverage_pct = (total_region_area / img_area * 100) if img_area > 0 else 0
+
+        if len(regions) > 20:
+            # Demasiadas regiones — probable ruido por patrones repetitivos
+            detected = False
+            confidence = min(confidence, 40)
+            summary = (
+                f'Se detectaron {len(regions)} regiones con similitud ({confidence}% confianza), '
+                f'pero el número excesivo de regiones indica patrones repetitivos naturales '
+                f'(uniformes, estanterías, texturas) más que una manipulación real. No concluyente.'
+            )
+        elif coverage_pct > 60:
+            # Más del 60% de la imagen marcada — no es copy-move localizado
+            detected = False
+            confidence = min(confidence, 45)
+            summary = (
+                f'La cobertura de las regiones detectadas ({round(coverage_pct,1)}% de la imagen) '
+                f'es demasiado amplia para ser una manipulación localizada. '
+                f'Probable variación de textura natural. No concluyente.'
+            )
+        elif detected:
+            heatmap_b64 = None
             heatmap_img = draw_copymove_heatmap(img_orig, regions, scale_factor=scale)
             buf = io.BytesIO()
             heatmap_img.save(buf, 'JPEG', quality=85)
             heatmap_b64 = base64.b64encode(buf.getvalue()).decode()
-
-        summary = (
-            f'Se detectaron {len(regions)} región(es) con patrones de copia-pega. '
-            f'Confianza: {confidence}%. Las zonas marcadas en rojo son el origen '
-            f'(de donde se copió) y las azules el destino (donde se pegó). '
-            f'Esta técnica se usa para ocultar fechas, carteles, placas u otros elementos identificadores.'
-            if detected else
-            f'Se encontraron {len(regions)} región(es) con cierta similitud, pero la confianza es baja ({confidence}%). No concluyente.'
-        )
+            summary = (
+                f'Se detectaron {len(regions)} región(es) con patrones de copia-pega. '
+                f'Confianza: {confidence}%. Las zonas marcadas en rojo son el origen '
+                f'(de donde se copió) y las azules el destino (donde se pegó). '
+                f'Esta técnica se usa para ocultar fechas, carteles, placas u otros elementos identificadores.'
+            )
+        else:
+            heatmap_b64 = None
+            summary = f'Se encontraron {len(regions)} región(es) con cierta similitud, pero la confianza es baja ({confidence}%). No concluyente.'
 
         return jsonify({
             'detected': detected, 'confidence': confidence,
